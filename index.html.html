@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Japan Restaurant Finder with Google Maps & AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* Basic styles remain the same */
+        body { font-family: 'Inter', sans-serif; }
+        #map { height: 100vh; background-color: #eee; } /* Map container */
+        .modal { transition: opacity 0.25s ease; }
+        .modal-content { transition: transform 0.25s ease; }
+        .review-scroll::-webkit-scrollbar { width: 6px; }
+        .review-scroll::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+        .review-scroll::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
+        .review-scroll::-webkit-scrollbar-thumb:hover { background: #555; }
+        .sidebar-scroll { max-height: 100vh; overflow-y: auto; }
+        .rating-text { font-weight: 500; color: #c69000; }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Custom InfoWindow styles for Google Maps */
+        .gm-style-iw {
+            border-radius: 8px !important;
+        }
+        .gm-style-iw-d {
+            overflow: hidden !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col md:flex-row">
+
+    <aside class="w-full md:w-1/3 lg:w-1/4 p-6 bg-white shadow-lg sidebar-scroll">
+        <h1 class="text-3xl font-bold text-green-700 mb-2">Live Restaurant Finder</h1>
+        <p class="text-sm text-gray-500 mb-2">Powered by Google Maps & Gemini AI</p>
+        <p id="currentTime" class="text-xs text-gray-400 mb-6"></p>
+
+        <div class="mb-4">
+            <label for="keywordSearch" class="block text-sm font-medium text-gray-700">Search for...</label>
+            <input type="text" id="keywordSearch" placeholder="e.g., ramen, sushi, vegan" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm">
+        </div>
+
+        <button id="searchButton" class="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            Search This Area
+        </button>
+        
+        <p class="text-xs text-gray-500 mt-2">Searches the visible map area. Pan and zoom to explore new places!</p>
+
+        <div id="resultsList" class="mt-6 space-y-2">
+            <h2 class="font-bold text-lg text-gray-800">Results</h2>
+            <div id="resultsContent" class="text-sm text-gray-600">
+                <p>Search the map to see results here.</p>
+            </div>
+        </div>
+
+    </aside>
+
+    <main class="w-full md:w-2/3 lg:w-3/4">
+        <div id="map"></div>
+    </main>
+
+    <!-- Modal for Restaurant Details -->
+    <div id="restaurantModal" class="modal fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 z-[1000] hidden opacity-0">
+        <div class="modal-content bg-white rounded-lg shadow-xl overflow-hidden w-full max-w-2xl max-h-[90vh] transform scale-95">
+            <div class="flex justify-between items-center p-4 border-b border-gray-200">
+                <h2 id="modalRestaurantName" class="text-2xl font-semibold text-green-700">Restaurant Name</h2>
+                <button id="closeModalButton" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="modalBody" class="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                <!-- Content will be populated dynamically -->
+                <div id="modalLoader" class="loader"></div>
+                <div id="modalDetailsContainer" class="hidden">
+                     <!-- Photo Gallery -->
+                    <div id="modalPhotos" class="grid grid-cols-3 gap-1 mb-4 h-32 overflow-hidden">
+                        <!-- Photos will be inserted here -->
+                    </div>
+                    
+                    <!-- Core Details -->
+                    <p id="modalRestaurantAddress" class="text-gray-600 mb-1"></p>
+                    <p id="modalRestaurantRating" class="rating-text mb-4"></p>
+                    
+                    <!-- AI Insights Section -->
+                    <div class="mb-4 p-4 border rounded-lg bg-blue-50">
+                         <h3 class="text-xl font-semibold text-blue-800 mb-2">✨ AI-Powered Insights</h3>
+                         
+                         <!-- AI Summary Feature -->
+                         <div id="aiReviewSummaryContainer" class="mb-3">
+                             <p class="text-sm text-gray-600 mb-2">Get a quick summary of the reviews.</p>
+                             <button id="summarizeReviewsButton" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                 Summarize Reviews
+                             </button>
+                             <div id="aiSummaryContent" class="mt-2 text-gray-700 text-sm hidden"></div>
+                         </div>
+                         
+                         <hr class="my-3 border-blue-200">
+
+                         <!-- AI Dish Recommender Feature (NEW) -->
+                         <div id="aiDishRecommenderContainer">
+                             <p class="text-sm text-gray-600 mb-2">Don't know what to order? Ask the AI!</p>
+                             <button id="recommendDishesButton" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">
+                                 ✨ What Dishes Are Recommended?
+                             </button>
+                             <div id="aiDishRecsContent" class="mt-2 text-gray-700 text-sm hidden"></div>
+                         </div>
+                    </div>
+
+                    <!-- Raw Google Reviews -->
+                     <div>
+                         <h3 class="text-xl font-semibold text-gray-800 mb-2">Latest Google Reviews</h3>
+                         <div id="modalGoogleReviews" class="bg-gray-50 p-3 rounded-md shadow-inner h-48 overflow-y-auto review-scroll space-y-4">
+                             <!-- Reviews will be populated here -->
+                         </div>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 bg-gray-50 border-t border-gray-200 text-right">
+                 <a id="modalDirectionsLink" href="#" target="_blank" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gray-600 hover:bg-gray-700">
+                     Get Directions
+                 </a>
+                 <a id="modalRestaurantWebsite" href="#" target="_blank" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700">
+                     Visit Website
+                 </a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- IMPORTANT: Replace "YOUR_API_KEY_HERE" with your actual Google Cloud API key -->
+    <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBAZiXwnn2ULBdS5LSB4m4bV2YrakJ1My0&libraries=places&callback=initMap"></script>
+    
+    <script>
+        // --- Global Variables ---
+        let map;
+        let placesService;
+        let infoWindow;
+        let currentMarkers = [];
+        let currentPlaceInModal = null; // Store place details for the modal
+
+        // --- DOM Elements ---
+        const searchButton = document.getElementById('searchButton');
+        const keywordSearchInput = document.getElementById('keywordSearch');
+        const resultsContent = document.getElementById('resultsContent');
+        const modal = document.getElementById('restaurantModal');
+        const closeModalButton = document.getElementById('closeModalButton');
+        const modalBody = document.getElementById('modalBody');
+        const modalLoader = document.getElementById('modalLoader');
+        const modalDetailsContainer = document.getElementById('modalDetailsContainer');
+        const currentTimeEl = document.getElementById('currentTime');
+
+        /**
+         * This function is automatically called by the Google Maps script if API key authentication fails.
+         * It displays a clear error message to the user, telling them how to fix the problem.
+         */
+        function gm_authFailure() {
+            const mapDiv = document.getElementById('map');
+            mapDiv.innerHTML = `
+                <div class="h-full w-full flex items-center justify-center bg-red-100 p-4">
+                    <div class="text-center">
+                        <h2 class="text-2xl font-bold text-red-700">Google Maps API Error</h2>
+                        <p class="text-red-600 mt-2">Authentication failed. The API Key is likely invalid or missing.</p>
+                        <p class="mt-4 text-gray-700">Please open the code for this app, find the script tag that loads Google Maps, and replace <strong>"YOUR_API_KEY_HERE"</strong> with your actual Google Maps API key.</p>
+                        <p class="text-sm text-gray-500 mt-2">You can get a key from the Google Cloud Console.</p>
+                    </div>
+                </div>
+            `;
+            // Disable search functionality
+            document.getElementById('searchButton').disabled = true;
+            document.getElementById('keywordSearch').disabled = true;
+            document.getElementById('resultsContent').innerHTML = '<p class="text-red-500">Map disabled due to API Key error.</p>';
+        }
+
+        // --- Google Maps Initialization ---
+        function initMap() {
+            const urayasuCoords = { lat: 35.6520, lng: 139.8850 };
+            
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: urayasuCoords,
+                zoom: 14,
+                mapTypeControl: false, 
+                streetViewControl: false,
+            });
+
+            placesService = new google.maps.places.PlacesService(map);
+            infoWindow = new google.maps.InfoWindow();
+            
+            console.log("Google Map Initialized.");
+        }
+
+
+        // --- Search and Display Logic ---
+        function clearResults() {
+            currentMarkers.forEach(marker => marker.setMap(null));
+            currentMarkers = [];
+            resultsContent.innerHTML = '<p>Search the map to see results here.</p>';
+        }
+
+        function performSearch() {
+            clearResults();
+            resultsContent.innerHTML = `<div class="loader mx-auto"></div>`;
+
+            const keyword = keywordSearchInput.value.trim();
+            if (!keyword) {
+                resultsContent.innerHTML = '<p class="text-red-500">Please enter a keyword to search for (e.g., ramen).</p>';
+                return;
+            }
+
+            const request = {
+                bounds: map.getBounds(),
+                keyword: keyword + " restaurant", 
+                type: 'restaurant'
+            };
+
+            placesService.nearbySearch(request, (results, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                    displayResults(results);
+                } else if (status === google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
+                    resultsContent.innerHTML = '<p>No results found in this area. Try zooming out or moving the map.</p>';
+                } else {
+                    resultsContent.innerHTML = '<p class="text-red-500">An error occurred during the search.</p>';
+                    console.error("PlacesService search failed with status:", status);
+                }
+            });
+        }
+        
+        function displayResults(places) {
+            resultsContent.innerHTML = ''; // Clear loader
+            
+            places.forEach(place => {
+                if (!place.geometry || !place.geometry.location) return;
+
+                const marker = new google.maps.Marker({ map, position: place.geometry.location, title: place.name });
+                const resultItem = document.createElement('div');
+                resultItem.className = 'p-2 border rounded-md hover:bg-gray-100 cursor-pointer';
+                resultItem.innerHTML = `
+                    <p class="font-bold">${place.name}</p>
+                    <p class="text-xs">${place.vicinity}</p>
+                    <p class="text-xs rating-text">Rating: ${place.rating || 'N/A'} (${place.user_ratings_total || 0} reviews)</p>
+                `;
+
+                resultItem.addEventListener('click', () => showRestaurantDetails(place.place_id));
+                marker.addListener('click', () => {
+                    infoWindow.setContent(`<div class="p-2 font-sans"><strong>${place.name}</strong><br><button onclick="showRestaurantDetails('${place.place_id}')" class="text-blue-600 hover:underline mt-1">Click for details</button></div>`);
+                    infoWindow.open(map, marker);
+                });
+
+                resultsContent.appendChild(resultItem);
+                currentMarkers.push(marker);
+            });
+        }
+
+        // --- Modal and Details Logic ---
+        function showRestaurantDetails(placeId) {
+            modal.classList.remove('hidden');
+            requestAnimationFrame(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('.modal-content').classList.remove('scale-95');
+                modal.classList.add('opacity-100');
+                modal.querySelector('.modal-content').classList.add('scale-100');
+            });
+            
+            modalLoader.classList.remove('hidden');
+            modalDetailsContainer.classList.add('hidden');
+            
+            const request = {
+                placeId: placeId,
+                fields: ['name', 'formatted_address', 'website', 'rating', 'user_ratings_total', 'reviews', 'photos', 'url']
+            };
+
+            placesService.getDetails(request, (place, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+                    currentPlaceInModal = place; 
+                    populateModal(place);
+                    modalLoader.classList.add('hidden');
+                    modalDetailsContainer.classList.remove('hidden');
+                } else {
+                    console.error("Place Details request failed:", status);
+                    // Temporarily show error in loader's place
+                    modalLoader.classList.remove('hidden');
+                    modalLoader.innerHTML = '<p class="text-red-500 p-4">Could not load restaurant details.</p>';
+                }
+            });
+        }
+
+        function populateModal(place) {
+            document.getElementById('modalRestaurantName').textContent = place.name;
+            document.getElementById('modalRestaurantAddress').textContent = place.formatted_address || 'Address not available.';
+            document.getElementById('modalRestaurantRating').textContent = `Rating: ${place.rating || 'N/A'} from ${place.user_ratings_total || 0} reviews`;
+            
+            const photosContainer = document.getElementById('modalPhotos');
+            photosContainer.innerHTML = '';
+            if (place.photos && place.photos.length > 0) {
+                place.photos.slice(0, 3).forEach(photo => {
+                    const img = document.createElement('img');
+                    img.src = photo.getUrl({ maxWidth: 400, maxHeight: 400 });
+                    img.alt = `${place.name} photo`;
+                    img.className = 'w-full h-full object-cover rounded-md';
+                    img.onerror = () => img.style.display='none'; // Hide if photo fails to load
+                    photosContainer.appendChild(img);
+                });
+            } else {
+                photosContainer.innerHTML = '<p class="col-span-3 text-sm text-gray-500 flex items-center justify-center h-full">No photos available.</p>';
+            }
+
+            const reviewsContainer = document.getElementById('modalGoogleReviews');
+            reviewsContainer.innerHTML = '';
+            if (place.reviews && place.reviews.length > 0) {
+                place.reviews.forEach(review => {
+                    const reviewEl = document.createElement('div');
+                    reviewEl.className = 'border-b pb-3';
+                    reviewEl.innerHTML = `
+                        <div class="flex items-center mb-1">
+                           <img src="${review.profile_photo_url}" alt="${review.author_name}" class="w-8 h-8 rounded-full mr-2">
+                           <div>
+                                <p class="font-semibold text-sm">${review.author_name}</p>
+                                <p class="text-xs text-gray-500">${review.relative_time_description}</p>
+                           </div>
+                           <span class="ml-auto rating-text text-sm">${review.rating} ★</span>
+                        </div>
+                        <p class="mt-1 text-sm text-gray-700">${review.text}</p>
+                    `;
+                    reviewsContainer.appendChild(reviewEl);
+                });
+            } else {
+                reviewsContainer.innerHTML = '<p>No reviews available.</p>';
+            }
+
+            const websiteLink = document.getElementById('modalRestaurantWebsite');
+            if (place.website) {
+                websiteLink.href = place.website;
+                websiteLink.classList.remove('hidden');
+            } else {
+                websiteLink.classList.add('hidden');
+            }
+            
+            const directionsLink = document.getElementById('modalDirectionsLink');
+            if (place.url) {
+                directionsLink.href = place.url;
+                directionsLink.classList.remove('hidden');
+            } else {
+                directionsLink.classList.add('hidden');
+            }
+            
+            // Reset both AI sections
+            document.getElementById('aiSummaryContent').innerHTML = '';
+            document.getElementById('aiSummaryContent').classList.add('hidden');
+            document.getElementById('summarizeReviewsButton').classList.remove('hidden');
+            document.getElementById('aiDishRecsContent').innerHTML = '';
+            document.getElementById('aiDishRecsContent').classList.add('hidden');
+            document.getElementById('recommendDishesButton').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            modal.classList.add('opacity-0');
+            modal.querySelector('.modal-content').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('opacity-100'); 
+                modal.querySelector('.modal-content').classList.remove('scale-100');
+                currentPlaceInModal = null;
+            }, 250);
+        }
+        
+        // --- Gemini AI Function ---
+        async function callGeminiAPI(prompt) {
+            // NOTE: The API key is managed by the execution environment (e.g., Google's AI Studio).
+            // You do not need to add your key here for this environment to work.
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+                const result = await response.json();
+
+                // Check for content and safety ratings
+                if (result.candidates && result.candidates.length > 0) {
+                     const candidate = result.candidates[0];
+                     if(candidate.finishReason === "SAFETY") {
+                        return "The AI couldn't generate a response due to safety filters."
+                     }
+                     if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
+                         return candidate.content.parts[0].text;
+                     }
+                }
+                
+                console.error("Unexpected API response structure:", result);
+                return "The AI returned an empty or invalid response.";
+
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                return "An error occurred while contacting the AI.";
+            }
+        }
+
+        // --- Utility Functions ---
+        function updateTime() {
+            currentTimeEl.textContent = new Date().toLocaleString('en-US', {
+                timeZone: 'Asia/Tokyo',
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            }) + ' JST';
+        }
+
+
+        // --- Event Listeners ---
+        searchButton.addEventListener('click', performSearch);
+        keywordSearchInput.addEventListener('keypress', (e) => {
+            if(e.key === 'Enter') performSearch();
+        });
+
+        document.getElementById('summarizeReviewsButton').addEventListener('click', async () => {
+            if (!currentPlaceInModal || !currentPlaceInModal.reviews || currentPlaceInModal.reviews.length === 0) {
+                document.getElementById('aiSummaryContent').innerHTML = "Not enough review data to summarize.";
+                return;
+            }
+
+            const button = document.getElementById('summarizeReviewsButton');
+            const contentDiv = document.getElementById('aiSummaryContent');
+            
+            button.classList.add('hidden');
+            contentDiv.innerHTML = `<div class="loader"></div>`;
+            contentDiv.classList.remove('hidden');
+
+            const reviewTexts = currentPlaceInModal.reviews.map(r => `Rating: ${r.rating}, Review: ${r.text}`).join('\n---\n');
+            const prompt = `You are a helpful assistant. Please provide a brief, bulleted summary of the following reviews for the restaurant "${currentPlaceInModal.name}". Synthesize the information to capture the overall sentiment, highlighting the most common pros and cons. Format the output in markdown with a "Pros" and "Cons" list. Keep it concise. Reviews:\n${reviewTexts}`;
+            
+            const summary = await callGeminiAPI(prompt);
+            contentDiv.innerHTML = summary.replace(/\*/g, '• ').replace(/\n/g, '<br>');
+        });
+
+        // NEW EVENT LISTENER for Dish Recommendations
+        document.getElementById('recommendDishesButton').addEventListener('click', async () => {
+            if (!currentPlaceInModal || !currentPlaceInModal.reviews || currentPlaceInModal.reviews.length === 0) {
+                document.getElementById('aiDishRecsContent').innerHTML = "Not enough review data to recommend dishes.";
+                return;
+            }
+
+
+            const button = document.getElementById('recommendDishesButton');
+            const contentDiv = document.getElementById('aiDishRecsContent');
+            
+            button.classList.add('hidden');
+            contentDiv.innerHTML = `<div class="loader"></div>`;
+            contentDiv.classList.remove('hidden');
+
+            const reviewTexts = currentPlaceInModal.reviews.map(r => r.text).join('\n---\n');
+            const prompt = `Based on the following user reviews for the restaurant "${currentPlaceInModal.name}", what are the most frequently recommended or praised dishes? List the top 3-5 dishes in a simple markdown list format. If no specific dishes are mentioned, state that clearly. Reviews:\n${reviewTexts}`;
+            
+            const recommendation = await callGeminiAPI(prompt);
+            contentDiv.innerHTML = recommendation.replace(/\*/g, '• ').replace(/\n/g, '<br>');
+        });
+
+
+        closeModalButton.addEventListener('click', closeModal);
+        window.addEventListener('keydown', (e) => (e.key === 'Escape' && !modal.classList.contains('hidden')) && closeModal());
+        modal.addEventListener('click', (e) => (e.target === modal) && closeModal());
+        
+        // Initial call to set the time
+        updateTime();
+        // Update the time every minute
+        setInterval(updateTime, 60000);
+    </script>
+</body>
+</html>
